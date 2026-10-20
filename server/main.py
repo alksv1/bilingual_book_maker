@@ -13,6 +13,7 @@ from server import config
 from server.database import init_db, ensure_directories
 from server.schemas import ErrorResponse
 from server.routers import auth_router, tasks_router, settings_router
+from server.middleware.auth import DualModeAuthMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +43,11 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# Configure CORS
+# Configure Middlewares
+# DualModeAuthMiddleware enforces protection when AUTH_PASSWORD is configured
+app.add_middleware(DualModeAuthMiddleware)
+
+# Configure CORS (outermost middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
@@ -57,6 +62,7 @@ app.add_middleware(
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
+        headers=getattr(exc, "headers", None),
         content=ErrorResponse(
             detail=str(exc.detail),
             code=getattr(exc, "code", "HTTP_ERROR"),

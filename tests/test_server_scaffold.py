@@ -161,8 +161,12 @@ def test_auth_router_stubs(client: TestClient):
     assert res.json()["success"] is True
 
 
-def test_tasks_router_stubs(client: TestClient):
-    """Test tasks endpoints contracts."""
+def test_tasks_router_stubs(client: TestClient, monkeypatch):
+    """Test persistent task endpoint contracts without external translation calls."""
+    from unittest.mock import AsyncMock
+    from server.routers.tasks import runner
+
+    monkeypatch.setattr(runner, "enqueue", AsyncMock())
     # POST /api/tasks (multipart upload)
     files = [
         ("files", ("test1.epub", b"dummy content 1", "application/epub+zip")),
@@ -184,25 +188,25 @@ def test_tasks_router_stubs(client: TestClient):
     res = client.get("/api/tasks?status=all&limit=20&offset=0")
     assert res.status_code == 200
     task_list = TaskListResponse(**res.json())
-    assert task_list.total == 0
-    assert task_list.items == []
+    assert task_list.total == 2
+    assert {task.id for task in task_list.items} == {task["id"] for task in tasks}
 
     # POST /api/tasks/{id}/cancel
-    res = client.post("/api/tasks/test-task-1/cancel")
+    task_id = tasks[0]["id"]
+    res = client.post(f"/api/tasks/{task_id}/cancel")
     assert res.status_code == 200
     assert res.json()["status"] == "cancelled"
 
-    # DELETE /api/tasks/{id}
-    res = client.delete("/api/tasks/test-task-1?delete_file=true")
-    assert res.status_code == 204
-
     # GET /api/tasks/{id}/logs/stream
-    res = client.get("/api/tasks/test-task-1/logs/stream")
+    res = client.get(f"/api/tasks/{task_id}/logs/stream")
     assert res.status_code == 200
     assert "text/event-stream" in res.headers["content-type"]
 
-    # GET /api/tasks/{id}/download (expect 404 in stub mode)
-    res = client.get("/api/tasks/test-task-1/download")
+    res = client.delete(f"/api/tasks/{task_id}?delete_file=true")
+    assert res.status_code == 204
+
+    # Missing tasks return 404.
+    res = client.get(f"/api/tasks/{task_id}/download")
     assert res.status_code == 404
     err = res.json()
     assert "detail" in err
