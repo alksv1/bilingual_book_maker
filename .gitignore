@@ -145,6 +145,7 @@ log/
 !requirements.txt
 !requirements-pdf-cpu.txt
 !requirements-pdf-gpu.txt
+!requirements-web.txt
 *.bin
 *.epub
 
@@ -170,6 +171,9 @@ epub-sample
 # where runs put what they produce: the corpus gate writes its partition
 # audit here, and translated books land next to it
 output/
+
+# Web runtime persistent storage
+data/
 
 # your own provider entries, copied from bbm_providers.example.json
 bbm_providers.json
