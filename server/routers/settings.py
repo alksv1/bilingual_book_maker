@@ -1,9 +1,6 @@
-"""Settings router stubs for global preferences and provider configurations.
+"""Settings router for global preferences and provider configurations."""
 
-This module will be fully implemented by Issue #4 (Settings & Provider Manager).
-"""
-
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from server.schemas import (
     GeneralSettings,
     GeneralSettingsUpdate,
@@ -13,33 +10,16 @@ from server.schemas import (
     ProviderTestRequest,
     ProviderTestResponse,
 )
+from server.services.settings import SettingsError, settings_service
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
-# Initial in-memory mock settings for stub responses
-_MOCK_GENERAL_SETTINGS = GeneralSettings(
-    default_target_lang="zh-hans",
-    bilingual_style="default",
-    concurrency_limit=1,
-    max_retries=3,
-)
 
-_MOCK_PROVIDERS: dict[str, ProviderInfo] = {
-    "openai": ProviderInfo(
-        api_style="openai",
-        base_url="https://api.openai.com/v1",
-        default_models=["gpt-4o", "gpt-4o-mini"],
-        has_api_key=True,
-        masked_api_key="sk-proj-****AbCd",
-    ),
-    "gemini": ProviderInfo(
-        api_style="gemini",
-        base_url=None,
-        default_models=["gemini-1.5-pro", "gemini-1.5-flash"],
-        has_api_key=False,
-        masked_api_key=None,
-    ),
-}
+async def _call(operation, *args):
+    try:
+        return await operation(*args)
+    except SettingsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
 
 
 @router.get(
@@ -49,7 +29,7 @@ _MOCK_PROVIDERS: dict[str, ProviderInfo] = {
 )
 async def get_general_settings() -> GeneralSettings:
     """Return current global preferences."""
-    return _MOCK_GENERAL_SETTINGS
+    return await _call(settings_service.get_general_settings)
 
 
 @router.put(
@@ -59,12 +39,7 @@ async def get_general_settings() -> GeneralSettings:
 )
 async def update_general_settings(payload: GeneralSettingsUpdate) -> GeneralSettings:
     """Update global preferences with provided fields."""
-    global _MOCK_GENERAL_SETTINGS
-    data = _MOCK_GENERAL_SETTINGS.model_dump()
-    updates = payload.model_dump(exclude_unset=True)
-    data.update(updates)
-    _MOCK_GENERAL_SETTINGS = GeneralSettings(**data)
-    return _MOCK_GENERAL_SETTINGS
+    return await _call(settings_service.update_general_settings, payload)
 
 
 @router.get(
@@ -74,10 +49,7 @@ async def update_general_settings(payload: GeneralSettingsUpdate) -> GeneralSett
 )
 async def get_providers() -> ProvidersListResponse:
     """Return provider configurations with sensitive keys masked."""
-    return ProvidersListResponse(
-        active_provider="openai",
-        providers=_MOCK_PROVIDERS,
-    )
+    return await _call(settings_service.get_providers)
 
 
 @router.put(
@@ -90,26 +62,7 @@ async def update_provider(
     payload: ProviderUpdateRequest,
 ) -> ProviderInfo:
     """Update or insert a provider definition."""
-    existing = _MOCK_PROVIDERS.get(
-        provider_name,
-        ProviderInfo(
-            api_style="openai",
-            base_url=payload.base_url,
-            default_models=payload.default_models or ["default-model"],
-            has_api_key=bool(payload.api_key),
-            masked_api_key="sk-****" if payload.api_key else None,
-        ),
-    )
-    if payload.base_url is not None:
-        existing.base_url = payload.base_url
-    if payload.default_models is not None:
-        existing.default_models = payload.default_models
-    if payload.api_key:
-        existing.has_api_key = True
-        existing.masked_api_key = f"{payload.api_key[:4]}****{payload.api_key[-4:]}" if len(payload.api_key) > 8 else "****"
-
-    _MOCK_PROVIDERS[provider_name] = existing
-    return existing
+    return await _call(settings_service.update_provider, provider_name, payload)
 
 
 @router.post(
@@ -121,8 +74,5 @@ async def test_provider(
     provider_name: str,
     payload: ProviderTestRequest,
 ) -> ProviderTestResponse:
-    """Simulate provider ping connection test."""
-    return ProviderTestResponse(
-        success=True,
-        message=f"Provider '{provider_name}' connected successfully. Simulated latency 120ms.",
-    )
+    """Perform lightweight connectivity test against the provider."""
+    return await _call(settings_service.test_provider, provider_name, payload)
