@@ -2,12 +2,15 @@
 
 import pytest
 import aiosqlite
+import httpx
 from pathlib import Path
 from fastapi.testclient import TestClient
 
 from server.main import app
 from server import config
 from server.database import init_db
+from server.routers import settings as settings_router
+from server.services.settings import SettingsService
 from server.schemas import (
     AuthStatusResponse,
     LoginRequest,
@@ -15,6 +18,20 @@ from server.schemas import (
     ProvidersListResponse,
     TaskListResponse,
 )
+
+
+@pytest.fixture(autouse=True)
+def no_external_http(monkeypatch):
+    """Scaffold tests must not contact any external HTTP endpoint."""
+    async def blocked_async(*args, **kwargs):
+        pytest.fail("Unexpected external async HTTP request")
+
+    def blocked_sync(*args, **kwargs):
+        pytest.fail("Unexpected external sync HTTP request")
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", blocked_async)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", blocked_sync)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
 
 @pytest.fixture
@@ -27,6 +44,9 @@ def client(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "OUTPUT_DIR", temp_data / "output")
     monkeypatch.setattr(config, "LOGS_DIR", temp_data / "logs")
     monkeypatch.setattr(config, "DB_PATH", temp_data / "bbm_tasks.db")
+    monkeypatch.setattr(settings_router, "settings_service", SettingsService(
+        config_dir=temp_data / "config", db_path=temp_data / "bbm_tasks.db",
+    ))
 
     with TestClient(app) as test_client:
         yield test_client
@@ -192,8 +212,8 @@ def test_tasks_router_stubs(client: TestClient, monkeypatch):
     assert "detail" in err
 
 
-def test_settings_router_stubs(client: TestClient):
-    """Test settings endpoints contracts."""
+def test_settings_router_contracts(client: TestClient, monkeypatch):
+    """Exercise real settings persistence with a mocked upstream models request."""
     # GET /api/settings/general
     res = client.get("/api/settings/general")
     assert res.status_code == 200
@@ -215,7 +235,8 @@ def test_settings_router_stubs(client: TestClient):
     assert res.status_code == 200
     providers = ProvidersListResponse(**res.json())
     assert "openai" in providers.providers
-    assert providers.providers["openai"].masked_api_key is not None
+    assert providers.providers["openai"].has_api_key is False
+    assert providers.providers["openai"].masked_api_key is None
 
     # PUT /api/settings/providers/{name}
     res = client.put(
@@ -227,13 +248,24 @@ def test_settings_router_stubs(client: TestClient):
     assert p_info["base_url"] == "https://custom.api.com"
     assert p_info["has_api_key"] is True
 
-    # POST /api/settings/providers/{name}/test
+    # POST /api/settings/providers/{name}/test never reaches the network.
+    requests = []
+
+    async def models_response(transport, request):
+        requests.append(request)
+        return httpx.Response(200, json={"data": []}, request=request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", models_response)
     res = client.post(
         "/api/settings/providers/openai/test",
         json={"base_url": "https://api.openai.com/v1"},
     )
     assert res.status_code == 200
     assert res.json()["success"] is True
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert requests[0].url.path == "/v1/models"
+    assert requests[0].headers["authorization"] == "Bearer sk-123456789"
 
 
 def test_error_response_format(client: TestClient):
