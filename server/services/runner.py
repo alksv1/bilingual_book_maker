@@ -18,6 +18,7 @@ import aiofiles
 import aiosqlite
 
 from server import config
+from server.services.settings import settings_service
 
 logger = logging.getLogger(__name__)
 PROGRESS_BRACKET_RE = re.compile(r"\[(\d+)\s*/\s*(\d+)\]")
@@ -328,6 +329,9 @@ class TaskRunner:
                     # Always JSON, never a server-local path interpreted by CLI.
                     cmd.extend(["--prompt", json.dumps({"user": task["prompt_template"]}, ensure_ascii=False)])
                 env = os.environ.copy()
+                for env_key, key in (await settings_service.get_provider_environment()).items():
+                    if not env.get(env_key, "").strip():
+                        env[env_key] = key
                 env.update(PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
                 env["PYTHONPATH"] = str(config.BASE_DIR.resolve()) + (
                     os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""

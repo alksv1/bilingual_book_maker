@@ -14,6 +14,7 @@ import aiosqlite
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
+from book_maker.prompt_file import check_user_placeholders
 from server import config
 from server.models import FileType, TaskStatus
 from server.schemas import TaskCancelResponse, TaskCreateResponse, TaskListResponse, TaskResponse
@@ -64,6 +65,15 @@ async def create_tasks(
     records = []
     committed = False
     try:
+        if prompt:
+            try:
+                if "{text}" not in prompt:
+                    raise ValueError(
+                        "Custom prompt must contain `{text}` for the source text."
+                    )
+                check_user_placeholders(prompt)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from None
         names = [(file.filename or "").replace("\\", "/").rsplit("/", 1)[-1] for file in files]
         if not files or any(Path(name).suffix.lower() not in ALLOWED_EXTENSIONS for name in names):
             raise HTTPException(400, "Supported file formats: epub, pdf, txt, srt")

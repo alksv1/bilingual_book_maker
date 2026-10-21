@@ -1,5 +1,7 @@
 # Bilingual Book Maker - Web & HTTP 接口与轻量部署设计方案
 
+> 已落地的跨模块执行契约、回归测试与已知限制见 [Web 集成验证记录](web_integration_verification.md)。
+
 ## 1. 概述与设计理念
 
 ### 1.1 核心诉求

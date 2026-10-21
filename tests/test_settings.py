@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import aiosqlite
@@ -202,6 +203,119 @@ async def test_saved_keys_get_distinct_runner_environment_names(service):
     environment = await fresh(service).get_provider_environment()
     assert environment[one] == "secret-one"
     assert environment[two] == "secret-two"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ambient,saved,expected",
+    [
+        ("ambient-secret", "saved-secret", "ambient-secret"),
+        ("ambient-secret", "   ", "ambient-secret"),
+        (None, "saved-secret", "saved-secret"),
+        ("", "saved-secret", "saved-secret"),
+        ("   ", "saved-secret", "saved-secret"),
+        (None, "   ", ""),
+        ("   ", "", ""),
+    ],
+)
+async def test_provider_credential_priority(
+    service, monkeypatch, mock_http, ambient, saved, expected
+):
+    env_key = "BBM_TEST_PROVIDER_API_KEY"
+    write_providers(
+        service,
+        {
+            "custom": {
+                "api_style": "openai",
+                "base_url": "https://custom.example/v1",
+                "env_key": env_key,
+            }
+        },
+    )
+    service.keys_config_path.write_text(json.dumps({"custom": saved}), encoding="utf-8")
+    monkeypatch.delenv(env_key, raising=False)
+    if ambient is not None:
+        monkeypatch.setenv(env_key, ambient)
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-vendor-secret")
+    before = dict(os.environ)
+    restarted = fresh(service)
+    listing = await restarted.get_providers()
+    assert listing.providers["custom"].has_api_key is bool(expected)
+    assert listing.providers["custom"].masked_api_key == mask_api_key(expected)
+    environment = await restarted.get_provider_environment()
+    assert environment == ({env_key: saved.strip()} if saved.strip() else {})
+    requests = mock_http()
+    assert (await restarted.test_provider("custom", ProviderTestRequest())).success
+    assert requests[0].headers.get("authorization") == (
+        f"Bearer {expected}" if expected else None
+    )
+    assert dict(os.environ) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ambient,saved,expected",
+    [
+        ("ambient-secret", "saved-secret", "ambient-secret"),
+        (None, "saved-secret", "saved-secret"),
+        ("", "saved-secret", "saved-secret"),
+        ("   ", "saved-secret", "saved-secret"),
+        (None, "   ", None),
+        ("", "   ", ""),
+    ],
+)
+async def test_runner_child_credential_priority(
+    service, monkeypatch, tmp_path, ambient, saved, expected
+):
+    from server.services import runner as runner_module
+
+    env_key = "BBM_TEST_PROVIDER_API_KEY"
+    write_providers(service, {"custom": {"api_style": "openai", "env_key": env_key}})
+    service.keys_config_path.write_text(json.dumps({"custom": saved}), encoding="utf-8")
+    monkeypatch.delenv(env_key, raising=False)
+    if ambient is not None:
+        monkeypatch.setenv(env_key, ambient)
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-vendor-secret")
+    for name, value in {
+        "DATA_DIR": tmp_path,
+        "CONFIG_DIR": service.config_dir,
+        "DB_PATH": service.db_path,
+        "UPLOADS_DIR": tmp_path / "uploads",
+        "OUTPUT_DIR": tmp_path / "output",
+        "LOGS_DIR": tmp_path / "logs",
+        "STATIC_DIR": tmp_path / "static",
+    }.items():
+        monkeypatch.setattr(config, name, value)
+    monkeypatch.setattr(runner_module, "settings_service", fresh(service))
+    await init_db(service.db_path)
+    task_id = "credential-test"
+    async with aiosqlite.connect(service.db_path) as db:
+        await db.execute(
+            "INSERT INTO tasks (id, filename, file_path, file_type, status, log_path) "
+            "VALUES (?, ?, ?, 'txt', 'pending', ?)",
+            (
+                task_id,
+                "book.txt",
+                str(tmp_path / "book.txt"),
+                str(tmp_path / "task.log"),
+            ),
+        )
+        await db.commit()
+    captured = []
+
+    async def capture_spawn(*args, **kwargs):
+        captured.append(kwargs["env"])
+        raise RuntimeError("Test stops before spawning a child")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", capture_spawn)
+    before = dict(os.environ)
+    runner = runner_module.TaskRunner()
+    runner._db_path = service.db_path
+    await runner._execute_task(await runner.fetch_task(task_id))
+    assert len(captured) == 1
+    assert captured[0].get(env_key) == expected
+    assert captured[0]["OPENAI_API_KEY"] == "unrelated-vendor-secret"
+    assert dict(os.environ) == before
 
 
 @pytest.mark.asyncio

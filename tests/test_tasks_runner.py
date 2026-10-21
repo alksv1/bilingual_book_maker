@@ -77,6 +77,56 @@ def test_cancel_logs_delete_and_missing(client):
     assert client.get(f"/api/tasks/{task_id}/logs/stream").status_code == 404
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Translate this",
+        "{text} {unknown}",
+        "{text} {",
+        "{text} {text[0]}",
+        "{text:d}",
+        "instructions.txt",
+        "   ",
+    ],
+)
+def test_invalid_prompt_rejected_before_upload(client, prompt):
+    response = client.post(
+        "/api/tasks",
+        data={"prompt": prompt},
+        files={
+            "files": ("book.txt", b"hello world"),
+        },
+    )
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], str)
+    assert client.get("/api/tasks").json()["total"] == 0
+    assert not list(config.UPLOADS_DIR.iterdir())
+    runner.enqueue.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Translate {text} into {language}{crlf}",
+        "{{example}} {text}",
+        "Translate {text} using instructions.txt",
+        "",
+    ],
+)
+def test_valid_prompt_preserved(client, prompt):
+    response = client.post(
+        "/api/tasks",
+        data={"prompt": prompt},
+        files={
+            "files": ("book.txt", b"hello world"),
+        },
+    )
+    assert response.status_code == 201, response.text
+    task_id = response.json()[0]["id"]
+    task = asyncio.run(fetch_task(task_id))
+    assert (task["prompt_template"] or "") == prompt
+
+
 async def insert_task(task_id="task_test", status="pending"):
     source = config.UPLOADS_DIR / f"{task_id}.txt"
     source.write_text("hello", encoding="utf-8")

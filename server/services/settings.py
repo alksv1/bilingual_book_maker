@@ -237,7 +237,8 @@ class SettingsService:
 
     @staticmethod
     def _key(name, entry, keys):
-        return (keys.get(name) or os.environ.get(entry.get("env_key") or "", "")).strip()
+        return (os.environ.get(entry.get("env_key") or "", "").strip()
+                or keys.get(name, "").strip())
 
     def _info(self, name, entry, keys):
         key = self._key(name, entry, keys)
@@ -258,13 +259,13 @@ class SettingsService:
         return await self._run(read)
 
     async def get_provider_environment(self) -> dict[str, str]:
-        """Credential overrides to merge into a runner's subprocess env, also after restart."""
+        """Nonblank saved credentials; runners must preserve nonblank ambient values."""
         def read():
             keys = self._keys()
             return {
-                entry["env_key"]: keys[name]
+                entry["env_key"]: keys[name].strip()
                 for name, entry in self._providers_document()["providers"].items()
-                if name in keys and entry.get("env_key")
+                if keys.get(name, "").strip() and entry.get("env_key")
             }
         return await self._run(read)
 
