@@ -138,7 +138,10 @@ jobs:
             pip install black
             black . --check
       - name: install python requirements
-        run: pip install -r requirements.txt
+        run: |
+            pip install -r requirements.txt
+            pip install -r requirements-web.txt
+            pip install pytest-asyncio httpx
 
       - name: Test install
         run: |
