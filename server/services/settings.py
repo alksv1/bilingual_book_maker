@@ -330,18 +330,26 @@ class SettingsService:
         elif key:
             headers["Authorization"] = f"Bearer {key}"
         url = base + "/models"
+        specific_url = None
         if payload.model:
             model = payload.model.strip()
             if not model:
                 raise SettingsError(422, "Model must not be blank.")
             if style == "gemini" and model.startswith("models/"):
                 model = model[len("models/"):]
-            url += "/" + quote(model, safe="")
+            specific_url = url + "/" + quote(model, safe="")
         start = time.perf_counter()
         try:
             # Local endpoints are intentional (Ollama); never follow a redirect with a key.
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, trust_env=False) as client:
-                response = await asyncio.wait_for(client.get(url, headers=headers), timeout=10.0)
+                target_url = specific_url or url
+                response = await asyncio.wait_for(client.get(target_url, headers=headers), timeout=10.0)
+                # Many OpenAI-compatible relays/proxies only support GET /v1/models,
+                # returning 404 for GET /v1/models/{model}. Fall back to /v1/models if so.
+                if specific_url and response.status_code == 404:
+                    fallback_response = await asyncio.wait_for(client.get(url, headers=headers), timeout=10.0)
+                    if fallback_response.status_code == 200:
+                        response = fallback_response
             latency = int((time.perf_counter() - start) * 1000)
             if response.status_code == 200:
                 return ProviderTestResponse(success=True, message=f"连接成功，延迟 {latency}ms（模型接口，不执行翻译）")
