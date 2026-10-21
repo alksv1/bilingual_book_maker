@@ -121,7 +121,8 @@
 
               <div class="form-group" style="grid-column: 1 / -1;">
                 <label class="form-label" for="upload-prompt">自定义提示词 (可选 Prompt Template)</label>
-                <input type="text" id="upload-prompt" class="form-control" placeholder="留空则使用默认双语翻译提示词">
+                <input type="text" id="upload-prompt" class="form-control" aria-describedby="upload-prompt-help" placeholder="例如：请将 {text} 翻译为 {language}">
+                <small id="upload-prompt-help">留空使用默认提示词。自定义模板必须包含 {text}；可用 {language}、{crlf}，字面花括号请写成 {{ 和 }}。</small>
               </div>
             </div>
 

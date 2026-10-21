@@ -36,6 +36,7 @@ a template read out of a table cell arrives with its newlines still spelled
 """
 
 import re
+from string import Formatter
 
 # `## Heading` — only the ones this reader knows are sections; anything else
 # is refused by name rather than silently dropped, because a misspelled
@@ -170,3 +171,60 @@ def parse_prompt_markdown(text, source="the prompt file"):
         if body.get(section):
             prompt[section] = body[section]
     return prompt
+
+
+# Everything a `user` template may name in braces. The run fills these three
+# and nothing else, so a template naming a fourth is a run that dies on
+# `str.format` mid-book — which is why `parse_prompt_arg` dry-runs the format
+# before anything is paid for.
+USER_TEMPLATE_PLACEHOLDERS = ("text", "language", "crlf")
+
+
+def _unfillable(field):
+    known = ", ".join(f"{{{name}}}" for name in USER_TEMPLATE_PLACEHOLDERS)
+    return ValueError(
+        f"prompt's `user` template names {{{field}}}, which no run can fill. "
+        f"The placeholders are {known}; for a literal brace write "
+        f"`{{{{` and `}}}}`."
+    )
+
+
+def _unusable(reason):
+    return ValueError(
+        f"prompt's `user` template is not a usable format string ({reason}); "
+        f"for a literal brace write `{{{{` and `}}}}`."
+    )
+
+
+def check_user_placeholders(template):
+    """Refuse a `user` template naming something this run cannot fill.
+
+    `{text}` is required and `{language}`/`{crlf}` are offered; anything else
+    in braces used to surface from inside the translator, on the first
+    request, after the book had been opened and the endpoint paid. A brace
+    meant literally is written `{{`, and this sentence says so.
+
+    The fields are read out of the template rather than inferred from what
+    `str.format` throws, because what it throws depends on the shape: a bare
+    `{name}` is a KeyError, `{0}` an IndexError, and `{language.name}` or
+    `{text[0]}` — reaching for an attribute or an item of the string we fill
+    in — an AttributeError or a TypeError that names neither the placeholder
+    nor the template it came from. Reading the fields answers all of them the
+    same way, by name.
+    """
+    try:
+        fields = [f for _, f, _, _ in Formatter().parse(template) if f is not None]
+    except ValueError as e:
+        raise _unusable(e) from e
+
+    for field in fields:
+        root = field.split(".")[0].split("[")[0]
+        if field != root or root not in USER_TEMPLATE_PLACEHOLDERS:
+            raise _unfillable(field)
+
+    # The fields are known good; this catches what is left — a format spec
+    # the value cannot satisfy, like `{text:d}`.
+    try:
+        template.format(**dict.fromkeys(USER_TEMPLATE_PLACEHOLDERS, ""))
+    except Exception as e:  # noqa: BLE001 - re-raised as the sentence above
+        raise _unusable(e) from e

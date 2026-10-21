@@ -19,9 +19,12 @@ from server.services.runner import TaskRunner, fetch_task
 @pytest.fixture
 def storage(tmp_path, monkeypatch):
     for name, value in {
-        "DATA_DIR": tmp_path, "UPLOADS_DIR": tmp_path / "uploads",
-        "OUTPUT_DIR": tmp_path / "output", "LOGS_DIR": tmp_path / "logs",
-        "CONFIG_DIR": tmp_path / "config", "DB_PATH": tmp_path / "tasks.db",
+        "DATA_DIR": tmp_path,
+        "UPLOADS_DIR": tmp_path / "uploads",
+        "OUTPUT_DIR": tmp_path / "output",
+        "LOGS_DIR": tmp_path / "logs",
+        "CONFIG_DIR": tmp_path / "config",
+        "DB_PATH": tmp_path / "tasks.db",
         "GENERAL_CONFIG_PATH": tmp_path / "config/general.json",
         "PROVIDERS_CONFIG_PATH": tmp_path / "config/bbm_providers.json",
     }.items():
@@ -43,18 +46,26 @@ def upload(client, name="book.txt"):
 
 
 def test_batch_atomic_validation(client):
-    response = client.post("/api/tasks", files=[
-        ("files", ("good.txt", b"hello")), ("files", ("bad.exe", b"bad")),
-    ])
+    response = client.post(
+        "/api/tasks",
+        files=[
+            ("files", ("good.txt", b"hello")),
+            ("files", ("bad.exe", b"bad")),
+        ],
+    )
     assert response.status_code == 400
     assert client.get("/api/tasks").json()["total"] == 0
     assert not list(config.UPLOADS_DIR.iterdir())
 
 
 def test_empty_upload_rolls_back(client):
-    response = client.post("/api/tasks", files=[
-        ("files", ("good.txt", b"hello")), ("files", ("empty.txt", b"")),
-    ])
+    response = client.post(
+        "/api/tasks",
+        files=[
+            ("files", ("good.txt", b"hello")),
+            ("files", ("empty.txt", b"")),
+        ],
+    )
     assert response.status_code == 400
     assert client.get("/api/tasks").json()["total"] == 0
     assert not list(config.UPLOADS_DIR.iterdir())
@@ -77,6 +88,56 @@ def test_cancel_logs_delete_and_missing(client):
     assert client.get(f"/api/tasks/{task_id}/logs/stream").status_code == 404
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Translate this",
+        "{text} {unknown}",
+        "{text} {",
+        "{text} {text[0]}",
+        "{text:d}",
+        "instructions.txt",
+        "   ",
+    ],
+)
+def test_invalid_prompt_rejected_before_upload(client, prompt):
+    response = client.post(
+        "/api/tasks",
+        data={"prompt": prompt},
+        files={
+            "files": ("book.txt", b"hello world"),
+        },
+    )
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], str)
+    assert client.get("/api/tasks").json()["total"] == 0
+    assert not list(config.UPLOADS_DIR.iterdir())
+    runner.enqueue.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Translate {text} into {language}{crlf}",
+        "{{example}} {text}",
+        "Translate {text} using instructions.txt",
+        "",
+    ],
+)
+def test_valid_prompt_preserved(client, prompt):
+    response = client.post(
+        "/api/tasks",
+        data={"prompt": prompt},
+        files={
+            "files": ("book.txt", b"hello world"),
+        },
+    )
+    assert response.status_code == 201, response.text
+    task_id = response.json()[0]["id"]
+    task = asyncio.run(fetch_task(task_id))
+    assert (task["prompt_template"] or "") == prompt
+
+
 async def insert_task(task_id="task_test", status="pending"):
     source = config.UPLOADS_DIR / f"{task_id}.txt"
     source.write_text("hello", encoding="utf-8")
@@ -84,9 +145,14 @@ async def insert_task(task_id="task_test", status="pending"):
         await db.execute(
             """INSERT INTO tasks (id, filename, file_path, file_type, status,
                output_path, log_path) VALUES (?, ?, ?, 'txt', ?, ?, ?)""",
-            (task_id, "book.txt", str(source), status,
-             str(config.OUTPUT_DIR / f"{task_id}_bilingual.txt"),
-             str(config.LOGS_DIR / f"{task_id}.log")),
+            (
+                task_id,
+                "book.txt",
+                str(source),
+                status,
+                str(config.OUTPUT_DIR / f"{task_id}_bilingual.txt"),
+                str(config.LOGS_DIR / f"{task_id}.log"),
+            ),
         )
         await db.commit()
     return source
@@ -99,6 +165,7 @@ async def wait_terminal(task_id):
             if task["status"] not in ("pending", "running"):
                 return task
             await asyncio.sleep(0.02)
+
     return await asyncio.wait_for(wait(), 10)
 
 
@@ -144,7 +211,12 @@ async def test_failure_and_recovery(storage, monkeypatch):
     real_spawn = asyncio.create_subprocess_exec
 
     async def spawn(*args, **kwargs):
-        return await real_spawn(sys.executable, "-c", "import sys; print('failure', file=sys.stderr); sys.exit(7)", **kwargs)
+        return await real_spawn(
+            sys.executable,
+            "-c",
+            "import sys; print('failure', file=sys.stderr); sys.exit(7)",
+            **kwargs,
+        )
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     service = TaskRunner()
@@ -169,7 +241,13 @@ async def test_cancel_real_running_process(storage, monkeypatch):
     processes = []
 
     async def spawn(*args, **kwargs):
-        process = await real_spawn(sys.executable, "-u", "-c", "import time; print('started'); time.sleep(60)", **kwargs)
+        process = await real_spawn(
+            sys.executable,
+            "-u",
+            "-c",
+            "import time; print('started'); time.sleep(60)",
+            **kwargs,
+        )
         processes.append(process)
         spawned.set()
         return process
@@ -194,7 +272,9 @@ async def test_zero_exit_without_output_fails(storage, monkeypatch):
     real_spawn = asyncio.create_subprocess_exec
 
     async def spawn(*args, **kwargs):
-        return await real_spawn(sys.executable, "-c", "print('nothing produced')", **kwargs)
+        return await real_spawn(
+            sys.executable, "-c", "print('nothing produced')", **kwargs
+        )
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     service = TaskRunner()
@@ -217,7 +297,9 @@ async def test_concurrency_dedup_and_shutdown(storage, monkeypatch):
     processes = []
 
     async def spawn(*args, **kwargs):
-        process = await real_spawn(sys.executable, "-c", "import time; time.sleep(60)", **kwargs)
+        process = await real_spawn(
+            sys.executable, "-c", "import time; time.sleep(60)", **kwargs
+        )
         processes.append(process)
         spawned.set()
         return process
@@ -242,11 +324,15 @@ async def test_concurrency_dedup_and_shutdown(storage, monkeypatch):
 
 def test_download_and_terminal_cancel(client):
     import sqlite3
+
     task_id = upload(client)
     output = config.OUTPUT_DIR / f"{task_id}_bilingual.txt"
     output.write_text("translated", encoding="utf-8")
     with sqlite3.connect(config.DB_PATH) as db:
-        db.execute("UPDATE tasks SET status='completed', output_path=? WHERE id=?", (str(output), task_id))
+        db.execute(
+            "UPDATE tasks SET status='completed', output_path=? WHERE id=?",
+            (str(output), task_id),
+        )
     response = client.get(f"/api/tasks/{task_id}/download")
     assert response.status_code == 200
     assert response.text == "translated"
@@ -255,29 +341,40 @@ def test_download_and_terminal_cancel(client):
     assert output.exists()
 
 
-
 def test_sse_history_and_default_settings(client):
     import json
     import sqlite3
-    config.GENERAL_CONFIG_PATH.write_text(json.dumps({
-        "default_target_lang": "ja", "active_provider": "local-test"
-    }), encoding="utf-8")
+
+    config.GENERAL_CONFIG_PATH.write_text(
+        json.dumps({"default_target_lang": "ja", "active_provider": "local-test"}),
+        encoding="utf-8",
+    )
     task_id = upload(client)
     task = client.get("/api/tasks").json()["items"][0]
     assert task["target_language"] == "ja"
     assert task["model_provider"] == "local-test"
     log = config.LOGS_DIR / f"{task_id}.log"
-    log.write_text('[12:00:00] first' + chr(10) + '[12:00:01] last' + chr(10), encoding="utf-8")
+    log.write_text(
+        "[12:00:00] first" + chr(10) + "[12:00:01] last" + chr(10), encoding="utf-8"
+    )
     with sqlite3.connect(config.DB_PATH) as db:
         db.execute("UPDATE tasks SET status='completed' WHERE id=?", (task_id,))
     response = client.get(f"/api/tasks/{task_id}/logs/stream")
-    frames = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
-    assert frames == [{"time": "12:00:00", "line": "first"}, {"time": "12:00:01", "line": "last"}]
+    frames = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert frames == [
+        {"time": "12:00:00", "line": "first"},
+        {"time": "12:00:01", "line": "last"},
+    ]
 
 
 @pytest.mark.asyncio
 async def test_sse_live_tail_drains_final_log(storage):
     from server.routers.tasks import stream_task_logs
+
     await init_db()
     await insert_task()
     response = await stream_task_logs("task_test")

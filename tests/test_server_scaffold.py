@@ -23,6 +23,7 @@ from server.schemas import (
 @pytest.fixture(autouse=True)
 def no_external_http(monkeypatch):
     """Scaffold tests must not contact any external HTTP endpoint."""
+
     async def blocked_async(*args, **kwargs):
         pytest.fail("Unexpected external async HTTP request")
 
@@ -44,9 +45,14 @@ def client(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(config, "OUTPUT_DIR", temp_data / "output")
     monkeypatch.setattr(config, "LOGS_DIR", temp_data / "logs")
     monkeypatch.setattr(config, "DB_PATH", temp_data / "bbm_tasks.db")
-    monkeypatch.setattr(settings_router, "settings_service", SettingsService(
-        config_dir=temp_data / "config", db_path=temp_data / "bbm_tasks.db",
-    ))
+    monkeypatch.setattr(
+        settings_router,
+        "settings_service",
+        SettingsService(
+            config_dir=temp_data / "config",
+            db_path=temp_data / "bbm_tasks.db",
+        ),
+    )
 
     with TestClient(app) as test_client:
         yield test_client
@@ -255,7 +261,9 @@ def test_settings_router_contracts(client: TestClient, monkeypatch):
         requests.append(request)
         return httpx.Response(200, json={"data": []}, request=request)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", models_response)
+    monkeypatch.setattr(
+        httpx.AsyncHTTPTransport, "handle_async_request", models_response
+    )
     res = client.post(
         "/api/settings/providers/openai/test",
         json={"base_url": "https://api.openai.com/v1"},
