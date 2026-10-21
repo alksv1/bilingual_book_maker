@@ -15,7 +15,11 @@ from server import config
 from server.database import init_db
 from server.main import app
 from server.routers import settings as settings_router
-from server.schemas import GeneralSettingsUpdate, ProviderTestRequest, ProviderUpdateRequest
+from server.schemas import (
+    GeneralSettingsUpdate,
+    ProviderTestRequest,
+    ProviderUpdateRequest,
+)
 from server.services import settings as settings_module
 from server.services.settings import SettingsError, SettingsService, mask_api_key
 
@@ -23,6 +27,7 @@ from server.services.settings import SettingsError, SettingsService, mask_api_ke
 @pytest.fixture(autouse=True)
 def no_external_http(monkeypatch):
     """Fail closed, even if connectivity accidentally falls back to another call."""
+
     async def blocked_async(*args, **kwargs):
         pytest.fail("Unexpected external async HTTP request")
 
@@ -37,7 +42,9 @@ def no_external_http(monkeypatch):
 
 @pytest.fixture
 def service(tmp_path):
-    return SettingsService(config_dir=tmp_path / "config", db_path=tmp_path / "settings.db")
+    return SettingsService(
+        config_dir=tmp_path / "config", db_path=tmp_path / "settings.db"
+    )
 
 
 def fresh(service):
@@ -59,11 +66,16 @@ def mock_http(monkeypatch):
         async def handle(transport, request):
             requests.append(request)
             if error is not None:
-                raise error("sensitive-upstream-error sk-private-secret", request=request)
+                raise error(
+                    "sensitive-upstream-error sk-private-secret", request=request
+                )
             return httpx.Response(
-                status, json=body if body is not None else {"data": []},
-                headers=headers, request=request,
+                status,
+                json=body if body is not None else {"data": []},
+                headers=headers,
+                request=request,
             )
+
         monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle)
         return requests
 
@@ -86,10 +98,16 @@ def client(service, monkeypatch, tmp_path):
         yield test_client
 
 
-@pytest.mark.parametrize("key,masked", [
-    (None, None), ("", None), ("12345", "****"), ("12345678", "****"),
-    ("sk-proj-1234567890AbCd", "sk-p****AbCd"),
-])
+@pytest.mark.parametrize(
+    "key,masked",
+    [
+        (None, None),
+        ("", None),
+        ("12345", "****"),
+        ("12345678", "****"),
+        ("sk-proj-1234567890AbCd", "sk-p****AbCd"),
+    ],
+)
 def test_mask_api_key(key, masked):
     assert mask_api_key(key) == masked
 
@@ -99,8 +117,10 @@ async def test_general_defaults_partial_update_and_restart(service):
     await init_db(service.db_path)
     defaults = await service.get_general_settings()
     assert defaults.model_dump() == {
-        "default_target_lang": "zh-hans", "bilingual_style": "default",
-        "concurrency_limit": 1, "max_retries": 3,
+        "default_target_lang": "zh-hans",
+        "bilingual_style": "default",
+        "concurrency_limit": 1,
+        "max_retries": 3,
     }
     await service.update_general_settings(
         GeneralSettingsUpdate(default_target_lang="en", concurrency_limit=2)
@@ -136,7 +156,9 @@ async def test_json_is_primary_and_database_is_fallback(service):
 
 @pytest.mark.asyncio
 async def test_provider_defaults_have_no_fictional_key(service, monkeypatch):
-    write_providers(service, {"openai": {"api_style": "openai", "env_key": "OPENAI_API_KEY"}})
+    write_providers(
+        service, {"openai": {"api_style": "openai", "env_key": "OPENAI_API_KEY"}}
+    )
     response = await service.get_providers()
     assert response.providers["openai"].has_api_key is False
     assert response.providers["openai"].masked_api_key is None
@@ -151,10 +173,15 @@ async def test_provider_defaults_have_no_fictional_key(service, monkeypatch):
 async def test_provider_key_active_and_general_persist_across_instances(service):
     await init_db(service.db_path)
     secret = "sk-saved-secret-12345678"
-    await service.update_provider("custom", ProviderUpdateRequest(
-        base_url="https://custom.example/v1", api_key=secret,
-        default_models=["model-a"], set_as_active=True,
-    ))
+    await service.update_provider(
+        "custom",
+        ProviderUpdateRequest(
+            base_url="https://custom.example/v1",
+            api_key=secret,
+            default_models=["model-a"],
+            set_as_active=True,
+        ),
+    )
     await fresh(service).update_general_settings(GeneralSettingsUpdate(max_retries=0))
     restarted = fresh(service)
     assert (await restarted.get_saved_keys())["custom"] == secret
@@ -164,7 +191,9 @@ async def test_provider_key_active_and_general_persist_across_instances(service)
     assert listing.active_provider == "custom"
     assert listing.providers["custom"].has_api_key
     assert secret not in listing.model_dump_json()
-    providers = json.loads((service.config_dir / "bbm_providers.json").read_text(encoding="utf-8"))
+    providers = json.loads(
+        (service.config_dir / "bbm_providers.json").read_text(encoding="utf-8")
+    )
     assert secret not in json.dumps(providers)
     for name, entry in providers["providers"].items():
         validate_provider(name, entry)
@@ -172,15 +201,26 @@ async def test_provider_key_active_and_general_persist_across_instances(service)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key_update", [{}, {"api_key": None}, {"api_key": ""}, {"api_key": "   "}])
+@pytest.mark.parametrize(
+    "key_update", [{}, {"api_key": None}, {"api_key": ""}, {"api_key": "   "}]
+)
 async def test_missing_and_empty_key_preserve_saved_key(service, key_update):
     secret = "sk-preserved-secret-12345678"
-    await service.update_provider("custom", ProviderUpdateRequest(
-        base_url="https://custom.example/v1", default_models=["model-a"], api_key=secret,
-    ))
-    result = await fresh(service).update_provider("custom", ProviderUpdateRequest(
-        base_url="https://changed.example/v1", **key_update,
-    ))
+    await service.update_provider(
+        "custom",
+        ProviderUpdateRequest(
+            base_url="https://custom.example/v1",
+            default_models=["model-a"],
+            api_key=secret,
+        ),
+    )
+    result = await fresh(service).update_provider(
+        "custom",
+        ProviderUpdateRequest(
+            base_url="https://changed.example/v1",
+            **key_update,
+        ),
+    )
     assert result.has_api_key
     assert result.masked_api_key == mask_api_key(secret)
     assert (await fresh(service).get_saved_keys())["custom"] == secret
@@ -188,14 +228,25 @@ async def test_missing_and_empty_key_preserve_saved_key(service, key_update):
 
 @pytest.mark.asyncio
 async def test_saved_keys_get_distinct_runner_environment_names(service):
-    write_providers(service, {
-        name: {"api_style": "openai", "base_url": "https://custom.example/v1",
-               "env_key": "OPENAI_API_KEY", "default_models": ["model-a"]}
-        for name in ("one", "two")
-    })
+    write_providers(
+        service,
+        {
+            name: {
+                "api_style": "openai",
+                "base_url": "https://custom.example/v1",
+                "env_key": "OPENAI_API_KEY",
+                "default_models": ["model-a"],
+            }
+            for name in ("one", "two")
+        },
+    )
     for name in ("one", "two"):
-        await service.update_provider(name, ProviderUpdateRequest(api_key=f"secret-{name}"))
-    providers = json.loads((service.config_dir / "bbm_providers.json").read_text(encoding="utf-8"))["providers"]
+        await service.update_provider(
+            name, ProviderUpdateRequest(api_key=f"secret-{name}")
+        )
+    providers = json.loads(
+        (service.config_dir / "bbm_providers.json").read_text(encoding="utf-8")
+    )["providers"]
     one, two = providers["one"]["env_key"], providers["two"]["env_key"]
     assert one != two
     assert one != "OPENAI_API_KEY"
@@ -319,10 +370,15 @@ async def test_runner_child_credential_priority(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("updates", [
-    {"bilingual_style": "sideways"}, {"concurrency_limit": 0},
-    {"concurrency_limit": -1}, {"max_retries": -1},
-])
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"bilingual_style": "sideways"},
+        {"concurrency_limit": 0},
+        {"concurrency_limit": -1},
+        {"max_retries": -1},
+    ],
+)
 async def test_invalid_general_values_do_not_replace_saved_settings(service, updates):
     await service.update_general_settings(GeneralSettingsUpdate(max_retries=4))
     path = service.config_dir / "general.json"
@@ -334,15 +390,25 @@ async def test_invalid_general_values_do_not_replace_saved_settings(service, upd
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("updates", [
-    {"default_models": []}, {"default_models": [""]}, {"default_models": ["  "]},
-    {"base_url": "not-a-url"}, {"base_url": "ftp://custom.example"},
-    {"base_url": "https://user:password@custom.example/v1"},
-])
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"default_models": []},
+        {"default_models": [""]},
+        {"default_models": ["  "]},
+        {"base_url": "not-a-url"},
+        {"base_url": "ftp://custom.example"},
+        {"base_url": "https://user:password@custom.example/v1"},
+    ],
+)
 async def test_invalid_provider_values_do_not_overwrite(service, updates):
-    await service.update_provider("custom", ProviderUpdateRequest(
-        base_url="https://custom.example/v1", default_models=["model-a"],
-    ))
+    await service.update_provider(
+        "custom",
+        ProviderUpdateRequest(
+            base_url="https://custom.example/v1",
+            default_models=["model-a"],
+        ),
+    )
     path = service.config_dir / "bbm_providers.json"
     before = path.read_bytes()
     with pytest.raises(SettingsError) as error:
@@ -352,11 +418,17 @@ async def test_invalid_provider_values_do_not_overwrite(service, updates):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("filename,operation", [
-    ("general.json", "general"), ("keys.json", "keys"),
-    ("bbm_providers.json", "providers"),
-])
-async def test_malformed_json_is_reported_and_never_overwritten(service, filename, operation):
+@pytest.mark.parametrize(
+    "filename,operation",
+    [
+        ("general.json", "general"),
+        ("keys.json", "keys"),
+        ("bbm_providers.json", "providers"),
+    ],
+)
+async def test_malformed_json_is_reported_and_never_overwritten(
+    service, filename, operation
+):
     service.config_dir.mkdir(parents=True)
     path = service.config_dir / filename
     damaged = b'{"keep-this-user-data": '
@@ -365,9 +437,14 @@ async def test_malformed_json_is_reported_and_never_overwritten(service, filenam
         if operation == "general":
             await service.update_general_settings(GeneralSettingsUpdate(max_retries=2))
         else:
-            await service.update_provider("custom", ProviderUpdateRequest(
-                base_url="https://custom.example/v1", default_models=["model-a"], api_key="new-secret",
-            ))
+            await service.update_provider(
+                "custom",
+                ProviderUpdateRequest(
+                    base_url="https://custom.example/v1",
+                    default_models=["model-a"],
+                    api_key="new-secret",
+                ),
+            )
     assert path.read_bytes() == damaged
 
 
@@ -375,7 +452,9 @@ async def test_malformed_json_is_reported_and_never_overwritten(service, filenam
 async def test_concurrent_partial_updates_preserve_both_fields(service):
     await init_db(service.db_path)
     await asyncio.gather(
-        service.update_general_settings(GeneralSettingsUpdate(default_target_lang="en")),
+        service.update_general_settings(
+            GeneralSettingsUpdate(default_target_lang="en")
+        ),
         service.update_general_settings(GeneralSettingsUpdate(max_retries=8)),
     )
     result = await fresh(service).get_general_settings()
@@ -384,20 +463,46 @@ async def test_concurrent_partial_updates_preserve_both_fields(service):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("style,base,path,key_header", [
-    ("openai", "https://proxy.example/prefix/v1", "/prefix/v1/models", "authorization"),
-    ("anthropic", "https://proxy.example/prefix", "/prefix/v1/models", "x-api-key"),
-    ("gemini", "https://proxy.example/prefix", "/prefix/v1beta/models", "x-goog-api-key"),
-])
+@pytest.mark.parametrize(
+    "style,base,path,key_header",
+    [
+        (
+            "openai",
+            "https://proxy.example/prefix/v1",
+            "/prefix/v1/models",
+            "authorization",
+        ),
+        ("anthropic", "https://proxy.example/prefix", "/prefix/v1/models", "x-api-key"),
+        (
+            "gemini",
+            "https://proxy.example/prefix",
+            "/prefix/v1beta/models",
+            "x-goog-api-key",
+        ),
+    ],
+)
 @pytest.mark.parametrize("model", [None, "model-a"])
-async def test_connectivity_protocol_and_explicit_model(service, mock_http, style, base, path, key_header, model):
-    write_providers(service, {"custom": {
-        "api_style": style, "base_url": base, "default_models": ["unused-default"],
-    }})
+async def test_connectivity_protocol_and_explicit_model(
+    service, mock_http, style, base, path, key_header, model
+):
+    write_providers(
+        service,
+        {
+            "custom": {
+                "api_style": style,
+                "base_url": base,
+                "default_models": ["unused-default"],
+            }
+        },
+    )
     requests = mock_http()
-    response = await service.test_provider("custom", ProviderTestRequest(
-        api_key="sk-private-secret", model=model,
-    ))
+    response = await service.test_provider(
+        "custom",
+        ProviderTestRequest(
+            api_key="sk-private-secret",
+            model=model,
+        ),
+    )
     assert response.success is True
     assert len(requests) == 1
     request = requests[0]
@@ -417,10 +522,17 @@ async def test_connectivity_protocol_and_explicit_model(service, mock_http, styl
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [302, 401, 403, 404, 429, 500])
-async def test_connectivity_status_failure_no_redirect_fallback_or_body_leak(service, mock_http, status, caplog):
-    requests = mock_http(status=status, body={"error": "sensitive-upstream-error sk-private-secret"},
-                         headers={"location": "https://other.example/steal"})
-    response = await service.test_provider("openai", ProviderTestRequest(api_key="sk-private-secret"))
+async def test_connectivity_status_failure_no_redirect_fallback_or_body_leak(
+    service, mock_http, status, caplog
+):
+    requests = mock_http(
+        status=status,
+        body={"error": "sensitive-upstream-error sk-private-secret"},
+        headers={"location": "https://other.example/steal"},
+    )
+    response = await service.test_provider(
+        "openai", ProviderTestRequest(api_key="sk-private-secret")
+    )
     assert response.success is False
     assert len(requests) == 1
     assert "sk-private-secret" not in response.message + caplog.text
@@ -428,10 +540,16 @@ async def test_connectivity_status_failure_no_redirect_fallback_or_body_leak(ser
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout])
-async def test_connectivity_transport_errors_are_sanitized(service, mock_http, error, caplog):
+@pytest.mark.parametrize(
+    "error", [httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout]
+)
+async def test_connectivity_transport_errors_are_sanitized(
+    service, mock_http, error, caplog
+):
     requests = mock_http(error=error)
-    response = await service.test_provider("openai", ProviderTestRequest(api_key="sk-private-secret"))
+    response = await service.test_provider(
+        "openai", ProviderTestRequest(api_key="sk-private-secret")
+    )
     assert response.success is False
     assert len(requests) == 1
     assert "sk-private-secret" not in response.message + caplog.text
@@ -439,20 +557,29 @@ async def test_connectivity_transport_errors_are_sanitized(service, mock_http, e
 
 
 def test_router_persistence_and_mocked_ping(client, mock_http):
-    assert client.get("/api/settings/general").json()["default_target_lang"] == "zh-hans"
+    assert (
+        client.get("/api/settings/general").json()["default_target_lang"] == "zh-hans"
+    )
     response = client.put("/api/settings/general", json={"bilingual_style": "reversed"})
     assert response.status_code == 200
     assert response.json()["bilingual_style"] == "reversed"
-    response = client.put("/api/settings/providers/custom", json={
-        "base_url": "https://custom.example/v1", "api_key": "sk-router-secret-12345678",
-        "default_models": ["model-a"], "set_as_active": True,
-    })
+    response = client.put(
+        "/api/settings/providers/custom",
+        json={
+            "base_url": "https://custom.example/v1",
+            "api_key": "sk-router-secret-12345678",
+            "default_models": ["model-a"],
+            "set_as_active": True,
+        },
+    )
     assert response.status_code == 200
     assert response.json()["has_api_key"] is True
     assert "sk-router-secret-12345678" not in response.text
     assert client.get("/api/settings/providers").json()["active_provider"] == "custom"
     requests = mock_http()
-    response = client.post("/api/settings/providers/custom/test", json={"model": "model-a"})
+    response = client.post(
+        "/api/settings/providers/custom/test", json={"model": "model-a"}
+    )
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert len(requests) == 1
@@ -460,13 +587,16 @@ def test_router_persistence_and_mocked_ping(client, mock_http):
     assert requests[0].url.path == "/v1/models/model-a"
 
 
-@pytest.mark.parametrize("path,payload", [
-    ("general", {"bilingual_style": "sideways"}),
-    ("general", {"concurrency_limit": 0}),
-    ("general", {"max_retries": -1}),
-    ("providers/custom", {"default_models": []}),
-    ("providers/custom", {"base_url": "file:///etc/passwd"}),
-])
+@pytest.mark.parametrize(
+    "path,payload",
+    [
+        ("general", {"bilingual_style": "sideways"}),
+        ("general", {"concurrency_limit": 0}),
+        ("general", {"max_retries": -1}),
+        ("providers/custom", {"default_models": []}),
+        ("providers/custom", {"base_url": "file:///etc/passwd"}),
+    ],
+)
 def test_router_translates_validation_errors(client, path, payload):
     response = client.put(f"/api/settings/{path}", json=payload)
     assert response.status_code in (400, 422)
@@ -492,11 +622,19 @@ async def test_atomic_write_failure_leaves_original_json(service, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_concurrent_provider_updates_keep_both_keys_and_definitions(service):
-    await asyncio.gather(*(
-        service.update_provider(name, ProviderUpdateRequest(
-            base_url=f"https://{name}.example/v1", default_models=["model-a"], api_key=f"secret-{name}",
-        )) for name in ("one", "two")
-    ))
+    await asyncio.gather(
+        *(
+            service.update_provider(
+                name,
+                ProviderUpdateRequest(
+                    base_url=f"https://{name}.example/v1",
+                    default_models=["model-a"],
+                    api_key=f"secret-{name}",
+                ),
+            )
+            for name in ("one", "two")
+        )
+    )
     restarted = fresh(service)
     keys = await restarted.get_saved_keys()
     listing = await restarted.get_providers()
@@ -506,27 +644,42 @@ async def test_concurrent_provider_updates_keep_both_keys_and_definitions(servic
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("style,base,model,expected_path", [
-    ("anthropic", "https://proxy.example/prefix/v1", None, "/prefix/v1/models"),
-    ("gemini", "https://proxy.example/prefix/v1beta", "models/gemini-test", "/prefix/v1beta/models/gemini-test"),
-    ("gemini", "https://proxy.example/prefix/v1", None, "/prefix/v1/models"),
-])
-async def test_connectivity_does_not_duplicate_version_or_models_prefix(service, mock_http, style, base, model, expected_path):
+@pytest.mark.parametrize(
+    "style,base,model,expected_path",
+    [
+        ("anthropic", "https://proxy.example/prefix/v1", None, "/prefix/v1/models"),
+        (
+            "gemini",
+            "https://proxy.example/prefix/v1beta",
+            "models/gemini-test",
+            "/prefix/v1beta/models/gemini-test",
+        ),
+        ("gemini", "https://proxy.example/prefix/v1", None, "/prefix/v1/models"),
+    ],
+)
+async def test_connectivity_does_not_duplicate_version_or_models_prefix(
+    service, mock_http, style, base, model, expected_path
+):
     write_providers(service, {"custom": {"api_style": style, "base_url": base}})
     requests = mock_http()
-    response = await service.test_provider("custom", ProviderTestRequest(model=model, api_key="secret"))
+    response = await service.test_provider(
+        "custom", ProviderTestRequest(model=model, api_key="secret")
+    )
     assert response.success
     assert len(requests) == 1
     assert requests[0].url.path == expected_path
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("payload", [
-    {"base_url": "ftp://proxy.example"},
-    {"base_url": "https://proxy.example/v1?key=secret"},
-    {"base_url": "https://proxy.example/v1#fragment"},
-    {"model": "   "},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"base_url": "ftp://proxy.example"},
+        {"base_url": "https://proxy.example/v1?key=secret"},
+        {"base_url": "https://proxy.example/v1#fragment"},
+        {"model": "   "},
+    ],
+)
 async def test_invalid_connectivity_inputs_fail_before_http(service, payload):
     with pytest.raises(SettingsError) as error:
         await service.test_provider("openai", ProviderTestRequest(**payload))

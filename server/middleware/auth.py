@@ -34,9 +34,7 @@ EXACT_WHITELIST_PATHS: Set[str] = {
     "/api/auth/login",
 }
 
-PREFIX_WHITELIST_PATHS: Tuple[str, ...] = (
-    "/static/",
-)
+PREFIX_WHITELIST_PATHS: Tuple[str, ...] = ("/static/",)
 
 
 class SessionManager:
@@ -66,10 +64,14 @@ class SessionManager:
             "exp": now + validity,
         }
         payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
+        payload_b64 = (
+            base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
+        )
 
         key = cls._derive_signing_key(password)
-        signature = hmac.new(key, payload_b64.encode("ascii"), hashlib.sha256).hexdigest()
+        signature = hmac.new(
+            key, payload_b64.encode("ascii"), hashlib.sha256
+        ).hexdigest()
 
         return f"{payload_b64}.{signature}"
 
@@ -85,7 +87,9 @@ class SessionManager:
 
         payload_b64, signature = parts
         key = cls._derive_signing_key(password)
-        expected_sig = hmac.new(key, payload_b64.encode("ascii"), hashlib.sha256).hexdigest()
+        expected_sig = hmac.new(
+            key, payload_b64.encode("ascii"), hashlib.sha256
+        ).hexdigest()
 
         # Constant-time comparison to prevent timing attacks
         if not hmac.compare_digest(signature, expected_sig):
@@ -228,13 +232,17 @@ class DualModeAuthMiddleware:
             (b"content-length", str(len(error_body)).encode("ascii")),
         ]
 
-        await send({
-            "type": "http.response.start",
-            "status": 401,
-            "headers": response_headers,
-        })
-        await send({
-            "type": "http.response.body",
-            "body": error_body,
-            "more_body": False,
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 401,
+                "headers": response_headers,
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": error_body,
+                "more_body": False,
+            }
+        )

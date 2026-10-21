@@ -68,7 +68,9 @@ def _read_object(path: Path) -> dict | None:
     except FileNotFoundError:
         return None
     except (ValueError, UnicodeError):
-        raise SettingsError(500, "Configuration file is invalid; repair it before saving.") from None
+        raise SettingsError(
+            500, "Configuration file is invalid; repair it before saving."
+        ) from None
     if not isinstance(data, dict):
         raise SettingsError(500, "Configuration must be a JSON object.")
     return data
@@ -95,15 +97,20 @@ def _validate_url(value: str) -> str:
         parsed = urlsplit(value)
         parsed.port  # Validate the port as well as the hostname.
         valid = (
-            parsed.scheme in ("http", "https") and parsed.hostname
-            and not parsed.username and not parsed.password
-            and not parsed.query and not parsed.fragment
+            parsed.scheme in ("http", "https")
+            and parsed.hostname
+            and not parsed.username
+            and not parsed.password
+            and not parsed.query
+            and not parsed.fragment
             and not any(c.isspace() or ord(c) < 32 for c in value)
         )
     except ValueError:
         valid = False
     if not valid:
-        raise SettingsError(422, "Base URL must be HTTP(S), without credentials, query or fragment.")
+        raise SettingsError(
+            422, "Base URL must be HTTP(S), without credentials, query or fragment."
+        )
     return value.rstrip("/")
 
 
@@ -138,14 +145,19 @@ class SettingsService:
                 try:
                     return operation(*args)
                 except (OSError, sqlite3.Error):
-                    raise SettingsError(500, "Unable to read or persist settings.") from None
+                    raise SettingsError(
+                        500, "Unable to read or persist settings."
+                    ) from None
+
         return await asyncio.to_thread(locked)
 
     def _db_get(self, key):
         if not self.db_path.exists():
             return None
         with sqlite3.connect(self.db_path) as db:
-            row = db.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+            row = db.execute(
+                "SELECT value FROM app_settings WHERE key = ?", (key,)
+            ).fetchone()
         return row[0] if row else None
 
     def _db_set(self, key, value):
@@ -165,7 +177,9 @@ class SettingsService:
             try:
                 data = json.loads(raw) if raw else {}
             except ValueError:
-                raise SettingsError(500, "Stored general settings are invalid.") from None
+                raise SettingsError(
+                    500, "Stored general settings are invalid."
+                ) from None
         if not isinstance(data, dict):
             raise SettingsError(500, "Stored general settings must be an object.")
         return data
@@ -174,7 +188,10 @@ class SettingsService:
     def _general_model(data):
         values = GeneralSettings().model_dump()
         values.update({k: v for k, v in data.items() if k in values})
-        if not isinstance(values["default_target_lang"], str) or not values["default_target_lang"].strip():
+        if (
+            not isinstance(values["default_target_lang"], str)
+            or not values["default_target_lang"].strip()
+        ):
             raise SettingsError(422, "Default target language must not be blank.")
         if values["bilingual_style"] not in ("default", "reversed", "only"):
             raise SettingsError(422, "Invalid bilingual style.")
@@ -186,7 +203,9 @@ class SettingsService:
     async def get_general_settings(self) -> GeneralSettings:
         return await self._run(lambda: self._general_model(self._general()))
 
-    async def update_general_settings(self, payload: GeneralSettingsUpdate) -> GeneralSettings:
+    async def update_general_settings(
+        self, payload: GeneralSettingsUpdate
+    ) -> GeneralSettings:
         def update():
             data = self._general()
             data.update(payload.model_dump(exclude_unset=True))
@@ -195,6 +214,7 @@ class SettingsService:
             _write_object(self.general_config_path, data)
             self._db_set("general_settings", json.dumps(result.model_dump()))
             return result
+
         return await self._run(update)
 
     def _keys(self):
@@ -210,19 +230,28 @@ class SettingsService:
     def _providers_document(self):
         document = _read_object(self.providers_config_path)
         if document is None:
-            example = _read_object(config.BASE_DIR / "bbm_providers.example.json") or {"providers": {}}
-            document = {"providers": {
-                name: item for name, item in example.get("providers", {}).items()
-                if "FILL-ME" not in json.dumps(item)
-            }}
+            example = _read_object(config.BASE_DIR / "bbm_providers.example.json") or {
+                "providers": {}
+            }
+            document = {
+                "providers": {
+                    name: item
+                    for name, item in example.get("providers", {}).items()
+                    if "FILL-ME" not in json.dumps(item)
+                }
+            }
         providers = document.get("providers")
         if not isinstance(providers, dict):
-            raise SettingsError(500, "Provider configuration must contain a providers object.")
+            raise SettingsError(
+                500, "Provider configuration must contain a providers object."
+            )
         for name, entry in providers.items():
             try:
                 validate_provider(name, entry)
             except (ValueError, TypeError):
-                raise SettingsError(500, "Stored provider definition is invalid.") from None
+                raise SettingsError(
+                    500, "Stored provider definition is invalid."
+                ) from None
         return document
 
     def _active(self, providers):
@@ -233,19 +262,25 @@ class SettingsService:
         return "openai" if "openai" in providers else next(iter(providers), None)
 
     async def get_active_provider(self) -> str | None:
-        return await self._run(lambda: self._active(self._providers_document()["providers"]))
+        return await self._run(
+            lambda: self._active(self._providers_document()["providers"])
+        )
 
     @staticmethod
     def _key(name, entry, keys):
-        return (os.environ.get(entry.get("env_key") or "", "").strip()
-                or keys.get(name, "").strip())
+        return (
+            os.environ.get(entry.get("env_key") or "", "").strip()
+            or keys.get(name, "").strip()
+        )
 
     def _info(self, name, entry, keys):
         key = self._key(name, entry, keys)
         return ProviderInfo(
-            api_style=entry["api_style"], base_url=entry.get("base_url"),
+            api_style=entry["api_style"],
+            base_url=entry.get("base_url"),
             default_models=entry.get("default_models") or [],
-            has_api_key=bool(key), masked_api_key=mask_api_key(key),
+            has_api_key=bool(key),
+            masked_api_key=mask_api_key(key),
         )
 
     async def get_providers(self) -> ProvidersListResponse:
@@ -254,12 +289,17 @@ class SettingsService:
             keys = self._keys()
             return ProvidersListResponse(
                 active_provider=self._active(providers),
-                providers={name: self._info(name, entry, keys) for name, entry in providers.items()},
+                providers={
+                    name: self._info(name, entry, keys)
+                    for name, entry in providers.items()
+                },
             )
+
         return await self._run(read)
 
     async def get_provider_environment(self) -> dict[str, str]:
         """Nonblank saved credentials; runners must preserve nonblank ambient values."""
+
         def read():
             keys = self._keys()
             return {
@@ -267,9 +307,12 @@ class SettingsService:
                 for name, entry in self._providers_document()["providers"].items()
                 if keys.get(name, "").strip() and entry.get("env_key")
             }
+
         return await self._run(read)
 
-    async def update_provider(self, provider_name: str, payload: ProviderUpdateRequest) -> ProviderInfo:
+    async def update_provider(
+        self, provider_name: str, payload: ProviderUpdateRequest
+    ) -> ProviderInfo:
         def update():
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", provider_name):
                 raise SettingsError(422, "Invalid provider name.")
@@ -285,13 +328,21 @@ class SettingsService:
             try:
                 validate_provider(provider_name, entry)
             except (ValueError, TypeError):
-                raise SettingsError(422, "Invalid provider definition or model list.") from None
+                raise SettingsError(
+                    422, "Invalid provider definition or model list."
+                ) from None
             new_key = (payload.api_key or "").strip()
             if new_key:
                 if any(ord(c) < 32 or ord(c) > 126 for c in new_key):
-                    raise SettingsError(422, "API key must contain printable ASCII characters.")
+                    raise SettingsError(
+                        422, "API key must contain printable ASCII characters."
+                    )
                 # A shared OPENAI_API_KEY must not change another provider's credentials.
-                entry["env_key"] = "BBM_WEB_" + hashlib.sha256(provider_name.encode()).hexdigest().upper() + "_API_KEY"
+                entry["env_key"] = (
+                    "BBM_WEB_"
+                    + hashlib.sha256(provider_name.encode()).hexdigest().upper()
+                    + "_API_KEY"
+                )
                 keys[provider_name] = new_key
                 _write_object(self.keys_config_path, keys)
             providers[provider_name] = entry
@@ -301,19 +352,32 @@ class SettingsService:
                 _write_object(self.general_config_path, general)
                 self._db_set("active_provider", provider_name)
             return self._info(provider_name, entry, keys)
+
         return await self._run(update)
 
-    async def test_provider(self, provider_name: str, payload: ProviderTestRequest) -> ProviderTestResponse:
+    async def test_provider(
+        self, provider_name: str, payload: ProviderTestRequest
+    ) -> ProviderTestResponse:
         def read():
             entry = self._providers_document()["providers"].get(provider_name)
             if entry is None:
                 raise SettingsError(404, "Provider not found.")
             return dict(entry), self._key(provider_name, entry, self._keys())
+
         entry, saved_key = await self._run(read)
         style = entry["api_style"]
         if style not in (*_DEFAULT_BASES, "litellm"):
-            return ProviderTestResponse(success=False, message="This provider does not support a models connectivity probe.")
-        base = _validate_url((payload.base_url or entry.get("base_url") or _DEFAULT_BASES.get(style, "")).strip())
+            return ProviderTestResponse(
+                success=False,
+                message="This provider does not support a models connectivity probe.",
+            )
+        base = _validate_url(
+            (
+                payload.base_url
+                or entry.get("base_url")
+                or _DEFAULT_BASES.get(style, "")
+            ).strip()
+        )
         key = (payload.api_key or "").strip() or saved_key
         if any(ord(c) < 32 or ord(c) > 126 for c in key):
             raise SettingsError(422, "Invalid API key characters.")
@@ -336,23 +400,32 @@ class SettingsService:
             if not model:
                 raise SettingsError(422, "Model must not be blank.")
             if style == "gemini" and model.startswith("models/"):
-                model = model[len("models/"):]
+                model = model[len("models/") :]
             specific_url = url + "/" + quote(model, safe="")
         start = time.perf_counter()
         try:
             # Local endpoints are intentional (Ollama); never follow a redirect with a key.
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, trust_env=False) as client:
+            async with httpx.AsyncClient(
+                timeout=10.0, follow_redirects=False, trust_env=False
+            ) as client:
                 target_url = specific_url or url
-                response = await asyncio.wait_for(client.get(target_url, headers=headers), timeout=10.0)
+                response = await asyncio.wait_for(
+                    client.get(target_url, headers=headers), timeout=10.0
+                )
                 # Many OpenAI-compatible relays/proxies only support GET /v1/models,
                 # returning 404 for GET /v1/models/{model}. Fall back to /v1/models if so.
                 if specific_url and response.status_code == 404:
-                    fallback_response = await asyncio.wait_for(client.get(url, headers=headers), timeout=10.0)
+                    fallback_response = await asyncio.wait_for(
+                        client.get(url, headers=headers), timeout=10.0
+                    )
                     if fallback_response.status_code == 200:
                         response = fallback_response
             latency = int((time.perf_counter() - start) * 1000)
             if response.status_code == 200:
-                return ProviderTestResponse(success=True, message=f"连接成功，延迟 {latency}ms（模型接口，不执行翻译）")
+                return ProviderTestResponse(
+                    success=True,
+                    message=f"连接成功，延迟 {latency}ms（模型接口，不执行翻译）",
+                )
             if response.status_code in (401, 403):
                 message = f"认证失败 ({response.status_code}): API Key 无效或未授权"
             else:
@@ -362,7 +435,9 @@ class SettingsService:
             return ProviderTestResponse(success=False, message="连接超时 (10s)")
         except (httpx.HTTPError, httpx.InvalidURL, ValueError):
             # Remote bodies and exception text can echo keys or credential-bearing URLs.
-            return ProviderTestResponse(success=False, message="连接失败，请检查端点和网络配置")
+            return ProviderTestResponse(
+                success=False, message="连接失败，请检查端点和网络配置"
+            )
 
 
 settings_service = SettingsService()

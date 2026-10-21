@@ -26,7 +26,8 @@ jobs:
           cache: 'pip'
       - name: Install core, Web, and test dependencies
         run: |
-          pip install -r requirements.txt -r requirements-web.txt
+          pip install -r requirements.txt
+          pip install -r requirements-web.txt
           pip install pytest pytest-asyncio httpx
       - name: Run offline Web integration regressions
         run: >-

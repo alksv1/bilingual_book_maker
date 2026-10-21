@@ -17,7 +17,12 @@ from fastapi.responses import FileResponse, StreamingResponse
 from book_maker.prompt_file import check_user_placeholders
 from server import config
 from server.models import FileType, TaskStatus
-from server.schemas import TaskCancelResponse, TaskCreateResponse, TaskListResponse, TaskResponse
+from server.schemas import (
+    TaskCancelResponse,
+    TaskCreateResponse,
+    TaskListResponse,
+    TaskResponse,
+)
 from server.services.runner import fetch_task, read_general_settings, runner
 
 
@@ -74,8 +79,13 @@ async def create_tasks(
                 check_user_placeholders(prompt)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from None
-        names = [(file.filename or "").replace("\\", "/").rsplit("/", 1)[-1] for file in files]
-        if not files or any(Path(name).suffix.lower() not in ALLOWED_EXTENSIONS for name in names):
+        names = [
+            (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+            for file in files
+        ]
+        if not files or any(
+            Path(name).suffix.lower() not in ALLOWED_EXTENSIONS for name in names
+        ):
             raise HTTPException(400, "Supported file formats: epub, pdf, txt, srt")
         general = await read_general_settings()
         language = target_lang or general.get("default_target_lang", "zh-hans")
@@ -98,15 +108,31 @@ async def create_tasks(
             output_ext = ".epub" if ext == ".pdf" else ext
             output = config.OUTPUT_DIR / f"{task_id}_bilingual{output_ext}"
             log = config.LOGS_DIR / f"{task_id}.log"
-            records.append((task_id, name, str(source), str(output), ext[1:],
-                            provider, language, prompt, str(log), now, now))
-            created.append(TaskCreateResponse(id=task_id, filename=name, created_at=now))
+            records.append(
+                (
+                    task_id,
+                    name,
+                    str(source),
+                    str(output),
+                    ext[1:],
+                    provider,
+                    language,
+                    prompt,
+                    str(log),
+                    now,
+                    now,
+                )
+            )
+            created.append(
+                TaskCreateResponse(id=task_id, filename=name, created_at=now)
+            )
         async with aiosqlite.connect(config.DB_PATH) as db:
             await db.executemany(
                 """INSERT INTO tasks
                 (id, filename, file_path, output_path, file_type, model_provider,
                  target_language, prompt_template, log_path, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", records,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                records,
             )
             await db.commit()
         committed = True
@@ -127,7 +153,9 @@ async def list_tasks(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> TaskListResponse:
-    if status_filter != "all" and status_filter not in {state.value for state in TaskStatus}:
+    if status_filter != "all" and status_filter not in {
+        state.value for state in TaskStatus
+    }:
         raise HTTPException(422, "Invalid task status")
     where = "" if status_filter == "all" else " WHERE status = ?"
     params = () if status_filter == "all" else (status_filter,)
@@ -137,7 +165,9 @@ async def list_tasks(
         async with db.execute("SELECT COUNT(*) FROM tasks" + where, params) as cursor:
             total = (await cursor.fetchone())[0]
         async with db.execute(
-            "SELECT * FROM tasks" + where + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM tasks"
+            + where
+            + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ) as cursor:
             items = [TaskResponse(**dict(row)) for row in await cursor.fetchall()]
@@ -161,25 +191,35 @@ async def delete_task(task_id: str, delete_file: bool = Query(True)) -> Response
         async with aiosqlite.connect(config.DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("BEGIN IMMEDIATE")
-            async with db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)) as cursor:
+            async with db.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ) as cursor:
                 row = await cursor.fetchone()
             if row is None:
                 raise HTTPException(404, f"Task {task_id} not found")
             if row["status"] == "running" or runner.is_active(task_id):
                 raise HTTPException(409, "Cancel the running task before deleting it")
             if delete_file:
-                for key, root in (("file_path", config.UPLOADS_DIR),
-                                  ("output_path", config.OUTPUT_DIR), ("log_path", config.LOGS_DIR)):
+                for key, root in (
+                    ("file_path", config.UPLOADS_DIR),
+                    ("output_path", config.OUTPUT_DIR),
+                    ("log_path", config.LOGS_DIR),
+                ):
                     if row[key]:
                         managed_path(row[key], root).unlink(missing_ok=True)
                 source = managed_path(row["file_path"], config.UPLOADS_DIR)
                 # Known CLI artifacts only; never delete by a filename substring.
-                for name in (f".{source.stem}.temp.bin", f"{source.stem}_plan.json",
-                             f"{source.stem}_bilingual{source.suffix}",
-                             f"{source.stem}_bilingual.epub"):
+                for name in (
+                    f".{source.stem}.temp.bin",
+                    f"{source.stem}_plan.json",
+                    f"{source.stem}_bilingual{source.suffix}",
+                    f"{source.stem}_bilingual.epub",
+                ):
                     candidate = source.with_name(name)
                     if candidate.is_file():
-                        managed_path(candidate, config.UPLOADS_DIR).unlink(missing_ok=True)
+                        managed_path(candidate, config.UPLOADS_DIR).unlink(
+                            missing_ok=True
+                        )
             await db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
             await db.commit()
     return Response(status_code=204)
@@ -197,14 +237,18 @@ async def stream_task_logs(task_id: str) -> StreamingResponse:
         terminal = False
         while True:
             if log_path.is_file():
-                async with aiofiles.open(log_path, encoding="utf-8", errors="replace") as stream:
+                async with aiofiles.open(
+                    log_path, encoding="utf-8", errors="replace"
+                ) as stream:
                     await stream.seek(position)
                     while line := await stream.readline():
                         position = await stream.tell()
                         line = line.rstrip("\r\n")
                         match = LOG_TIMESTAMP.match(line)
                         timestamp, text = match.groups() if match else ("", line)
-                        yield "data: " + json.dumps({"time": timestamp, "line": text}, ensure_ascii=False) + "\n\n"
+                        yield "data: " + json.dumps(
+                            {"time": timestamp, "line": text}, ensure_ascii=False
+                        ) + "\n\n"
             if terminal:
                 return
             current = await fetch_task(task_id)
@@ -216,9 +260,14 @@ async def stream_task_logs(task_id: str) -> StreamingResponse:
             yield ": keepalive\n\n"
             await asyncio.sleep(0.2)
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={
-        "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-    })
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{task_id}/download")
@@ -230,6 +279,10 @@ async def download_task_output(task_id: str):
     if not output.is_file():
         raise HTTPException(404, "Translated output file is missing")
     filename = f"{Path(task['filename']).stem}_bilingual{output.suffix}"
-    media_type = {".epub": "application/epub+zip", ".pdf": "application/pdf",
-                  ".txt": "text/plain", ".srt": "text/plain"}.get(output.suffix, "application/octet-stream")
+    media_type = {
+        ".epub": "application/epub+zip",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+        ".srt": "text/plain",
+    }.get(output.suffix, "application/octet-stream")
     return FileResponse(output, filename=filename, media_type=media_type)

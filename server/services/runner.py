@@ -103,14 +103,18 @@ async def _append_log(path: Path, line: str) -> None:
 
 async def _terminate(proc: asyncio.subprocess.Process) -> None:
     """Always reap, including a child that exits between the check and signal."""
+
     async def drain(stream: asyncio.StreamReader) -> None:
         while await stream.read(4096):
             pass
 
     # Cancelled log readers may have left full pipes. Keep draining while
     # waiting: Process.wait() can otherwise hang even after the child is killed.
-    drains = [asyncio.create_task(drain(stream))
-              for stream in (proc.stdout, proc.stderr) if stream is not None]
+    drains = [
+        asyncio.create_task(drain(stream))
+        for stream in (proc.stdout, proc.stderr)
+        if stream is not None
+    ]
     try:
         if proc.returncode is None:
             try:
@@ -268,7 +272,11 @@ class TaskRunner:
                     if not self._is_started:
                         continue
                     task = await self.fetch_task(task_id)
-                    if not task or task["status"] != "pending" or self.is_active(task_id):
+                    if (
+                        not task
+                        or task["status"] != "pending"
+                        or self.is_active(task_id)
+                    ):
                         continue
                     # The execution is registered before its first await. It owns
                     # the pending->running claim as well, so even immediate cancel
@@ -317,32 +325,61 @@ class TaskRunner:
                 if not claimed:
                     return
                 source = Path(task["file_path"]).resolve()
-                suffix = ".epub" if source.suffix.lower() == ".pdf" else source.suffix.lower()
+                suffix = (
+                    ".epub"
+                    if source.suffix.lower() == ".pdf"
+                    else source.suffix.lower()
+                )
                 expected = source.with_name(f"{source.stem}_bilingual{suffix}")
-                destination = Path(config.OUTPUT_DIR).resolve() / f"{task_id}_bilingual{suffix}"
+                destination = (
+                    Path(config.OUTPUT_DIR).resolve() / f"{task_id}_bilingual{suffix}"
+                )
                 previous = expected.stat() if expected.exists() else None
-                cmd = [sys.executable, "-m", "book_maker.cli", "--book_name", str(source),
-                       "--language", task.get("target_language") or "zh-hans"]
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "book_maker.cli",
+                    "--book_name",
+                    str(source),
+                    "--language",
+                    task.get("target_language") or "zh-hans",
+                ]
                 if task.get("model_provider"):
                     cmd.extend(["--provider", task["model_provider"]])
                 if task.get("prompt_template"):
                     # Always JSON, never a server-local path interpreted by CLI.
-                    cmd.extend(["--prompt", json.dumps({"user": task["prompt_template"]}, ensure_ascii=False)])
+                    cmd.extend(
+                        [
+                            "--prompt",
+                            json.dumps(
+                                {"user": task["prompt_template"]}, ensure_ascii=False
+                            ),
+                        ]
+                    )
                 env = os.environ.copy()
-                for env_key, key in (await settings_service.get_provider_environment()).items():
+                for env_key, key in (
+                    await settings_service.get_provider_environment()
+                ).items():
                     if not env.get(env_key, "").strip():
                         env[env_key] = key
-                env.update(PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+                env.update(
+                    PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8"
+                )
                 env["PYTHONPATH"] = str(config.BASE_DIR.resolve()) + (
                     os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
                 )
                 config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
                 await _append_log(log_path, f"[System] Starting task {task_id}.")
                 # Cancellation/deletion cannot interleave with spawning/registering.
-                spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                    cwd=str(config.CONFIG_DIR.resolve()), env=env,
-                ))
+                spawn = asyncio.create_task(
+                    asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=str(config.CONFIG_DIR.resolve()),
+                        env=env,
+                    )
+                )
                 try:
                     proc = await asyncio.shield(spawn)
                 except asyncio.CancelledError:
@@ -360,19 +397,28 @@ class TaskRunner:
                     await _append_log(log_path, ("[stderr] " if stderr else "") + line)
                     if stderr:
                         stderr_tail.append(line)
-                    match = (PROGRESS_BRACKET_RE.search(line)
-                             or PROGRESS_TRANSLATING_RE.search(line)
-                             or PROGRESS_TQDM_RE.search(line))
+                    match = (
+                        PROGRESS_BRACKET_RE.search(line)
+                        or PROGRESS_TRANSLATING_RE.search(line)
+                        or PROGRESS_TQDM_RE.search(line)
+                    )
                     if match:
                         try:
                             current, total = map(int, match.groups())
                         except ValueError:
                             return  # Ignore absurdly long numeric counters.
                         old_current, old_total = progress
-                        if (0 <= current <= total <= 2**63 - 1 and total > 0
-                                and current >= old_current and total >= old_total
-                                and (not old_total or current * old_total >= old_current * total)
-                                and (current, total) != progress):
+                        if (
+                            0 <= current <= total <= 2**63 - 1
+                            and total > 0
+                            and current >= old_current
+                            and total >= old_total
+                            and (
+                                not old_total
+                                or current * old_total >= old_current * total
+                            )
+                            and (current, total) != progress
+                        ):
                             await self._update_task_progress(task_id, current, total)
                             progress = current, total
 
@@ -386,7 +432,7 @@ class TaskRunner:
                         separator = re.search(r"[\r\n]", buffer)
                         if separator and separator.start() < MAX_FRAME:
                             end = separator.start()
-                            line, buffer = buffer[:end], buffer[end + 1:]
+                            line, buffer = buffer[:end], buffer[end + 1 :]
                         elif len(buffer) >= MAX_FRAME:
                             line, buffer = buffer[:MAX_FRAME], buffer[MAX_FRAME:]
                         elif not chunk:
@@ -397,23 +443,32 @@ class TaskRunner:
                     if not chunk:
                         break
 
-            readers = [asyncio.create_task(read_stream(proc.stdout, False)),
-                       asyncio.create_task(read_stream(proc.stderr, True))]
+            readers = [
+                asyncio.create_task(read_stream(proc.stdout, False)),
+                asyncio.create_task(read_stream(proc.stderr, True)),
+            ]
             await asyncio.gather(*readers)
             returncode = await proc.wait()
             if returncode != 0:
-                raise RuntimeError(f"Process exited with code {returncode}" + (
-                    ": " + "\n".join(stderr_tail) if stderr_tail else ""
-                ))
+                raise RuntimeError(
+                    f"Process exited with code {returncode}"
+                    + (": " + "\n".join(stderr_tail) if stderr_tail else "")
+                )
             # Do not trust announcements of arbitrary paths, temp files, or an
             # old output left by a prior attempt that produced nothing this time.
             if not expected.is_file():
-                raise RuntimeError("CLI exited successfully but no bilingual output was generated")
+                raise RuntimeError(
+                    "CLI exited successfully but no bilingual output was generated"
+                )
             actual = expected.stat()
             if previous and (actual.st_mtime_ns, actual.st_size, actual.st_ino) == (
-                previous.st_mtime_ns, previous.st_size, previous.st_ino
+                previous.st_mtime_ns,
+                previous.st_size,
+                previous.st_ino,
             ):
-                raise RuntimeError("CLI exited successfully but bilingual output was not updated")
+                raise RuntimeError(
+                    "CLI exited successfully but bilingual output was not updated"
+                )
             destination.parent.mkdir(parents=True, exist_ok=True)
             if expected != destination:
                 # Keep ownership until the move finishes (a cancelled thread-pool
@@ -437,16 +492,24 @@ class TaskRunner:
                 # Also covers cancellation before the pending claim's first await.
                 if not claimed:
                     existing = await self.fetch_task(task_id)
-                    if existing and existing["status"] == "pending" and status == "cancelled":
+                    if (
+                        existing
+                        and existing["status"] == "pending"
+                        and status == "cancelled"
+                    ):
                         await _append_log(log_path, "[System] Task cancelled.")
                         async with aiosqlite.connect(self._db_path) as db:
                             await db.execute(
                                 "UPDATE tasks SET status = 'cancelled', updated_at = ? "
-                                "WHERE id = ? AND status = 'pending'", (_now(), task_id),
+                                "WHERE id = ? AND status = 'pending'",
+                                (_now(), task_id),
                             )
                             await db.commit()
                 else:
-                    await _append_log(log_path, f"[System] Task {status}." + (f" {error}" if error else ""))
+                    await _append_log(
+                        log_path,
+                        f"[System] Task {status}." + (f" {error}" if error else ""),
+                    )
                     current, total = progress
                     if status == "completed" and total:
                         current = total
@@ -459,7 +522,9 @@ class TaskRunner:
                         )
                         await db.commit()
 
-    async def _update_task_progress(self, task_id: str, current: int, total: int) -> None:
+    async def _update_task_progress(
+        self, task_id: str, current: int, total: int
+    ) -> None:
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
                 "UPDATE tasks SET progress_current = ?, progress_total = ?, updated_at = ? "

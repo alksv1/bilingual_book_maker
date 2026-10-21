@@ -300,7 +300,9 @@ def test_brute_force_lockout_endpoint(client: TestClient, monkeypatch):
     monkeypatch.setattr(config, "AUTH_PASSWORD", test_password)
 
     # Use a custom limiter instance for isolated testing
-    custom_limiter = LoginRateLimiter(max_failures=3, window_seconds=60, lockout_seconds=60)
+    custom_limiter = LoginRateLimiter(
+        max_failures=3, window_seconds=60, lockout_seconds=60
+    )
     monkeypatch.setattr("server.routers.auth.rate_limiter", custom_limiter)
 
     headers = {"X-Forwarded-For": "203.0.113.195"}
@@ -320,10 +322,14 @@ def test_brute_force_lockout_endpoint(client: TestClient, monkeypatch):
     assert "锁定" in res.json()["detail"]
 
     # 4th attempt (even with correct password) while locked -> 429
-    res = client.post("/api/auth/login", json={"password": test_password}, headers=headers)
+    res = client.post(
+        "/api/auth/login", json={"password": test_password}, headers=headers
+    )
     assert res.status_code == 429
 
     # Another IP should NOT be blocked
     other_headers = {"X-Forwarded-For": "198.51.100.1"}
-    res = client.post("/api/auth/login", json={"password": test_password}, headers=other_headers)
+    res = client.post(
+        "/api/auth/login", json={"password": test_password}, headers=other_headers
+    )
     assert res.status_code == 200
