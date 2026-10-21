@@ -40,6 +40,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_cancelling(task: asyncio.Task) -> bool:
+    """Python 3.10 compatibility for Task.cancelling()."""
+    if hasattr(task, "cancelling"):
+        return bool(task.cancelling())
+    return task.cancelled()
+
+
 async def _fetch_task(task_id: str, db_path: Path) -> dict | None:
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
@@ -243,7 +250,7 @@ class TaskRunner:
             if task["status"] == "cancelled" and execution is None:
                 return True
             if execution is not None:
-                if not execution.cancelling():
+                if not _is_cancelling(execution):
                     execution.cancel()
             else:
                 await _append_log(Path(task["log_path"]), "[System] Task cancelled.")
@@ -288,11 +295,12 @@ class TaskRunner:
                 await asyncio.shield(execution)
             except asyncio.CancelledError:
                 if execution is not None:
-                    if not execution.cancelling():
+                    if not _is_cancelling(execution):
                         execution.cancel()
                     await asyncio.gather(execution, return_exceptions=True)
                 # An individually cancelled execution must not retire its worker.
-                if asyncio.current_task().cancelling():
+                current = asyncio.current_task()
+                if current is not None and _is_cancelling(current):
                     raise
             except Exception:
                 logger.exception("Worker failed for task %s", task_id)
